@@ -706,7 +706,7 @@ Content-Type: text/html
   #set ($foo = $filePointer.writeln("/configure service epipe $m_serviceId sap $sapId ingress policer-control-override priority-mbs-thresholds"))
   #set ($foo = $filePointer.writeln("/configure service epipe $m_serviceId sap $sapId ingress policer-control-override priority-mbs-thresholds priority 2 mbs-contribution $m_p2 bytes"))
   #set ($foo = $filePointer.writeln("/configure service epipe $m_serviceId sap $sapId ingress policer-control-override priority-mbs-thresholds priority 5 mbs-contribution $m_p5 bytes"))
-  #set ($foo = $filePointer.writeln("/configure service epipe $m_serviceId sap $sapId ingress policer-control-override priority priority-mbs-thresholds 6 mbs-contribution $m_p6 bytes"))
+  #set ($foo = $filePointer.writeln("/configure service epipe $m_serviceId sap $sapId ingress policer-control-override priority-mbs-thresholds priority 6 mbs-contribution $m_p6 bytes"))
   #set ($foo = $filePointer.writeln("/configure service epipe $m_serviceId sap $sapId ingress qos 59940"))
   #set ($foo = $filePointer.writeln("/configure service epipe $m_serviceId sap $sapId ingress policer-override policer 2 create"))
   #if (($d2Rate != "-2") || ($d2Cir != "-2"))   
