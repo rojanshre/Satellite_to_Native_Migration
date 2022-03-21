@@ -878,7 +878,7 @@ Content-Type: text/html
   #set ($foo = $filePointer.writeln("/configure service epipe $m_serviceId sap $m_sapId eth-cfm mep 1 domain 2 association $m_serviceId ccm-enable"))
   #set ($foo = $filePointer.writeln("/configure service epipe $m_serviceId sap $m_sapId eth-cfm mep 1 domain 2 association $m_serviceId mac-address 00:00:00:00:00:01"))
   #set ($foo = $filePointer.writeln("/configure service epipe $m_serviceId sap $m_sapId eth-cfm mep 1 domain 2 association $m_serviceId ccm-ltm-priority 5"))
-  #set ($foo = $filePointer.writeln("/configure service epipe $m_serviceId sap $m_sapId eth-cfm mep 1 domain 2 association $m_serviceId one-way-delay-threshold 0"))  
+  ##set ($foo = $filePointer.writeln("/configure service epipe $m_serviceId sap $m_sapId eth-cfm mep 1 domain 2 association $m_serviceId one-way-delay-threshold 0"))  
   #set ($foo = $filePointer.writeln("/configure service epipe $m_serviceId sap $m_sapId eth-cfm mep 1 domain 2 association $m_serviceId no shutdown "))
   #set ($foo = $filePointer.writeln("/configure service epipe $m_serviceId no shutdown"))
 #end
