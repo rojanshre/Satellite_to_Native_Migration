@@ -1,0 +1,892 @@
+##velocityProperties##Placeholder do not remove##
+
+Content-Type: text/html
+
+##++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+##++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+##   Name: Ten by Ten GigE Breakout Script CTL
+## 
+##   Version:	0.3
+##   Author:	Guy Smith
+##  
+##++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+## Version History
+##++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+##++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
+<p><b><font size="3" color="black"></font></b></p>
+
+#set ($targetSiteId = $targetNode.siteId)
+
+#set ($userInvoker = $alCtrl.defineCliScriptInvoker("Ten by Ten GigE Breakout Manage User CLI"))
+#set ($syntaxInvoker = $alCtrl.defineCliScriptInvoker("Ten by Ten GigE Breakout Syntax Check CLI"))
+#set ($checkInvoker = $alCtrl.defineCliScriptInvoker("Ten by Ten GigE Breakout Pre-Post Check CLI"))
+
+
+#if ($action eq "run")
+
+#set ($rfFilename = "TxTG_Breakout_RollForward_${executionId}.txt")
+#set ($rbFilename = "TxTG_Breakout_RollBack_${executionId}.txt")
+
+#set ($executionId = $executionId.trim())	
+#set ($username="forTxTGMigration")
+#set ($password="TxTGMigrate1!")
+
+
+#set ($unidInniSaps = [])
+#set ($univInniSaps = [])
+#set ($ovcInniSaps = [])
+#set ($mgmtInniSaps = [])
+
+#set ($unidEnniSaps = [])
+#set ($univEnniSaps = [])
+#set ($ovcEnniSaps = [])
+
+
+#set ($satelitePorts = [])
+#set ($breakoutPorts = [])
+
+
+
+##++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+## Running Pre Check Script
+##++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+#prePostCheck($targetSiteId $targetLag.lagId $interfaceType)
+
+##Create user on target node
+#manageTempUser($username $password $targetSiteId "create")
+
+#set($rffile = $alCtrl.outputFile("sftp://$targetSiteId/cf3:/$rfFilename", "$username", $password))
+#if ($rffile.getSucceeded())
+  #printInfo("Roll Forward File loaded on sftp://$targetSiteId/cf3:/$rfFilename")
+#else
+  $alUtil.userError("Failed to output write file on $targetSiteId - $rffile.getErrorMessage()")
+#end
+
+#set($rbfile = $alCtrl.outputFile("sftp://$targetSiteId/cf3:/$rbFilename", "$username", $password))
+#if ($rbfile.getSucceeded())
+  #printInfo("Roll Back File loaded on sftp://$targetSiteId/cf3:/$rbFilename.")
+#else
+  $alUtil.userError("Failed to output write file on $targetSiteId - $rbfile.getErrorMessage()")
+#end
+
+##++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+## Shuitdown Lag
+##++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+#printInfo("")
+#printInfo("Shutting Down Lag $targetLag.lagId")
+#printInfo("Output to Roll Forward File")
+#shutdownLag($rffile $targetLag.lagId)
+#printInfo("Output to Roll Back File")
+#shutdownLag($rbfile $targetLag.lagId)
+
+
+##++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+## Handle INNI interface
+##++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+#if ($interfaceType.equalsIgnoreCase("inni"))
+#printInfo("")
+#printInfo("Interface Type INNI selected")
+#printInfo("")
+#printInfo("Finding SAPs on INNI Lag")
+ #set ($inniSaps = $alUtil.findByClass("service.L2AccessInterface","equality(portPointer,$targetLag.objectFullName)"))
+ #if ($inniSaps.size() eq 0)
+   #printError("No SAPs found on INNI Lag $targetLag.lagId")
+   $alUtil.userError("No SAPs found on INNI Lag $targetLag.lagId")	 
+ #end
+ #printInfo("")     
+ #printInfo("Classifying SAPs")     
+ #foreach ($inniSap in $inniSaps)
+   #if ($inniSap.ingressPolicyId eq 59460)
+     #set ($bar = $unidInniSaps.add($inniSap))
+   #elseif ($inniSap.ingressPolicyId eq 49)
+     #set ($bar = $univInniSaps.add($inniSap))    
+   #elseif ($inniSap.ingressPolicyId eq 22)
+     #set ($bar = $ovcInniSaps.add($inniSap))   
+   #elseif (($inniSap.ingressPolicyId ge 110 and $inniSap.ingressPolicyId le 129) or ($inniSap.ingressPolicyId ge 210 and $inniSap.ingressPolicyId le 229))
+     #set ($bar = $mgmtInniSaps.add($inniSap))
+   #elseif ($inniSap.ingressPolicyId eq 34)
+     #printError("CSAS SAP found on $targetLag.lagId. This needs to be handled manually. Please rerun script when CSAS SAP has been removed from LAG.")
+     $alUtil.userError("CSAS SAP found on $targetLag.lagId. This needs to be handled manually. Please rerun script when CSAS SAP has been removed from LAG.")     
+   #else
+     #printError("Unable to Clasify SAP $inniSap.objectFullName")
+     $alUtil.userError("Unable to Clasify SAP $inniSap.objectFullName based on ingress QoS Policy Id of $inniSap.ingressPolicyId")	
+   #end 
+ #end
+ #printInfo("")    
+ #printInfo("Removing UNID INNI SAPs")    
+ #foreach ($sap in $unidInniSaps)
+    #printInfo("UNID SAP $sap.objectFullName")
+    #set ($serviceId = $sap.serviceId)  
+    #set ($sapId = $sap.portIdentifyingName)
+#printInfo("Output to Roll Forward File")      
+    #unidRemoveInniSap($rffile $serviceId $sapId)
+#printInfo("Output to Roll Back File")      
+    #unidRemoveInniSap($rbfile $serviceId $sapId)
+ #end
+ #printInfo("")    
+ #printInfo("Removing UNIV INNI SAPs")        
+ #foreach ($sap in $univInniSaps)
+    #printInfo("UNIV SAP $sap.objectFullName")
+    #set ($serviceId = $sap.serviceId)  
+    #set ($sapId = $sap.portIdentifyingName)
+#printInfo("Output to Roll Forward File")      
+    #univRemoveInniSap($rffile $serviceId $sapId)
+#printInfo("Output to Roll Back File")      
+    #univRemoveInniSap($rbfile $serviceId $sapId)
+ #end
+ #printInfo("")    
+ #printInfo("Removing OVC INNI SAPs")        
+ #foreach ($sap in $ovcInniSaps)
+    #printInfo("OVC SAP $sap.objectFullName")
+    #set ($serviceId = $sap.serviceId)  
+    #set ($sapId = $sap.portIdentifyingName)
+    #set ($sapFdn = $sap.objectFullName)  
+#printInfo("Output to Roll Forward File")      
+    #ovcRemoveInniSap($rffile $serviceId $sapId $sapFdn)
+#printInfo("Output to Roll Back File")      
+    #ovcRemoveInniSap($rbfile $serviceId $sapId $sapFdn)    
+ #end
+ #printInfo("")        
+ #printInfo("Removing Management VPLS INNI SAPs")            
+ #foreach ($sap in $mgmtInniSaps)
+    #printInfo("MGMT SAP $sap.objectFullName")
+    #set ($serviceId = $sap.serviceId)  
+    #set ($sapId = $sap.portIdentifyingName)
+#printInfo("Output to Roll Forward File")      
+    #ocsRemoveInniSap($rffile $serviceId $sapId)
+#printInfo("Output to Roll Back File")      
+    #ocsRemoveInniSap($rbfile $serviceId $sapId)
+  #end
+
+#printInfo("")
+#printInfo("Modifying LAG $targetLag.lagId details")      
+## Start Modify the lag 
+#set ($satPorts = $alUtil.findByClass("lag.PortTermination","and(equality(nodeId,$targetNode.siteId),equality(lagId,$targetLag.lagId))"))
+ #if ($satPorts.size() eq 0)
+    #printError("No ports found for this LAG $targetLag.lagId on $targedtNode.siteId")
+    $alUtil.userError("No ports found for this LAG $targetLag.lagId on $targedtNode.siteId")	
+ #else
+    #foreach ($satPort in $satPorts)
+      #set ($tempSatPort = $satPort.terminatedObjectName)
+      #set ($bar = $satelitePorts.add($tempSatPort))
+    #end
+ #end
+ 
+ #set($breakPorts = $boPorts.split("\r\n|\r|\n"))
+ #foreach($breakPort in $breakPorts)
+  #set ($bar = $breakoutPorts.add($breakPort))
+ #end
+#printInfo("Output to Roll Forward File") 
+  #configureLag ($rffile $targetLag.lagId $satelitePorts $breakoutPorts)
+#printInfo("Output to Roll Back File") 
+  #configureLag ($rbfile $targetLag.lagId $breakoutPorts $satelitePorts)
+  #printInfo("")  
+  #printInfo("Finished modifying LAG $targetLag.lagId details")      
+
+  #printInfo("")        
+  #printInfo("Rebuilding UNID INNI SAPs")  
+  #foreach ($sap in $unidInniSaps)
+    #printInfo("UNID SAP $sap.objectFullName")
+    #set ($serviceId = $sap.serviceId)
+    #set ($sapDescription = $sap.description)
+    #set ($sapId = $sap.portIdentifyingName)            
+##    #printInfo("UNID SAP Service ID $serviceId")
+##    #printInfo("UNID SAP Service Desc $sapDescription")
+##    #printInfo("UNID SAP ID $sapId")     
+#printInfo("Output to Roll Forward File")
+    #unidCreateInniSap($rffile $serviceId $sapDescription $sapId)
+#printInfo("Output to Roll Back File")
+    #unidCreateInniSap($rbfile $serviceId $sapDescription $sapId)
+  #end
+  #printInfo("")    
+  #printInfo("Rebuilding UNIV INNI SAPs")      
+  #foreach ($sap in $univInniSaps)
+    #printInfo("UNIV SAP $sap.objectFullName")
+    #set ($serviceId = $sap.serviceId)
+    #set ($sapDescription = $sap.description)
+    #set ($sapId = $sap.portIdentifyingName)            
+##    #printInfo("UNIV SAP Service ID $serviceId")
+##    #printInfo("UNIV SAP Service Desc $sapDescription")
+##    #printInfo("UNIV SAP ID $sapId")  
+#printInfo("Output to Roll Forward File")   
+    #univCreateInniSap($rffile $serviceId $sapDescription $sapId)
+#printInfo("Output to Roll Back File")   
+    #univCreateInniSap($rbfile $serviceId $sapDescription $sapId)
+  #end
+  #printInfo("")    
+  #printInfo("Rebuilding OVC INNI SAPs")      
+  #foreach ($sap in $ovcInniSaps)
+    #printInfo("OVC SAP $sap.objectFullName")
+    #set ($serviceId = $sap.serviceId)
+    #set ($sapDescription = $sap.description)
+    #set ($sapId = $sap.portIdentifyingName)
+    #set ($sapFdn = $sap.objectFullName)    
+##    #printInfo("OVC SAP Service ID $serviceId")
+##    #printInfo("OVC SAP Service Desc $sapDescription")
+##    #printInfo("OVC SAP ID $sapId")
+    #set ($egressQosId = $sap.egressPolicyId)  
+#printInfo("Output to Roll Forward File")               
+    #ovcCreateInniSap($rffile $serviceId $sapDescription $sapId $egressQosId $sapFdn)
+#printInfo("Output to Roll Back File")               
+    #ovcCreateInniSap($rbfile $serviceId $sapDescription $sapId $egressQosId $sapFdn)    
+  #end
+  #printInfo("")        
+  #printInfo("Rebuilding Management VPLS INNI SAPs")          
+  #foreach ($sap in $mgmtInniSaps)
+    #printInfo("MGMT SAP $sap.objectFullName")
+    #set ($serviceId = $sap.serviceId)
+    #set ($sapDescription = $sap.description)
+    #set ($sapId = $sap.portIdentifyingName)  
+    #set ($mgmtSapIngressQosId = $sap.ingressPolicyId)
+    #set ($mgmtSapEgressQosId = $sap.egressPolicyId)
+    #set ($fibFdnTmp = $sap.objectFullName)
+    #set ($fibFdn = "${fibFdnTmp}:fib")
+    #set ($entries = $alUtil.findByClass("l2fwd.AccessInterfaceFib","equality(objectFullName,$fibFdn)"))    
+    #if ($entries)
+      #set ($maxNbrMacAddress = $entries[0].maxEntries)
+      #printInfo("Max Number Mac Addresses found $maxNbrMacAddress")     
+    #else
+      #printInfo("Max Number Mac Addresses NOT found, defaulting to 150")                
+      #set ($maxNbrMacAddress = 150)
+    #end
+##    #printInfo("MGMT SAP Service ID $serviceId")
+##    #printInfo("MGMT SAP Service Desc $sapDescription")
+##    #printInfo("MGMT SAP ID $sapId")   
+#printInfo("Output to Roll Forward File")                     
+    #ocsCreateInniSap($rffile $serviceId $sapDescription $sapId $mgmtSapIngressQosId $mgmtSapEgressQosId $maxNbrMacAddress)
+#printInfo("Output to Roll Back File")                     
+    #ocsCreateInniSap($rbfile $serviceId $sapDescription $sapId $mgmtSapIngressQosId $mgmtSapEgressQosId $maxNbrMacAddress)
+  #end
+
+##  
+##++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+## Handle ENNI Interface
+##++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+#elseif ($interfaceType.equalsIgnoreCase("enni"))
+#printInfo("")
+#printInfo("Interface Type ENNI selected")
+#printInfo("")
+#printInfo("Finding SAPs on ENNI Lag")
+ #set ($enniSaps = $alUtil.findByClass("service.L2AccessInterface","equality(portPointer,$targetLag.objectFullName)"))
+ #if ($enniSaps.size() eq 0)
+   #printError("No SAPs found on ENNI Lag $targetLag.lagId")
+   $alUtil.userError("No SAPs found on ENNI Lag $targetLag.lagId")	 
+ #end
+ #printInfo("")
+ #printInfo("Classifying ENNI SAPs")     
+ #foreach ($enniSap in $enniSaps)
+   #if ($enniSap.ingressPolicyId eq 59940)
+     #set ($bar = $unidEnniSaps.add($enniSap))
+   #elseif ($enniSap.ingressPolicyId eq 48)
+     #set ($bar = $univEnniSaps.add($enniSap))    
+   #elseif ($enniSap.ingressPolicyId eq 21)
+     #set ($bar = $ovcEnniSaps.add($enniSap))
+    #printInfo("OVC SAP $enniSap.objectFullName")
+   #elseif ($enniSap.ingressPolicyId eq 33)
+     #printError("CSAS SAP found on $targetLag.lagId. This needs to be handled manually. Please rerun script when CSAS SAP has been removed from LAG.")
+     $alUtil.userError("CSAS SAP found on $targetLag.lagId. This needs to be handled manually. Please rerun script when CSAS SAP has been removed from LAG.")   
+   #else
+     #printError("Unable to Clasify SAP $enniSap.objectFullName")
+##     $alUtil.userError("Unable to Clasify SAP $enniSap.objectFullName based on ingress QoS Policy Id of $enniSap.ingressPolicyId")	
+   #end 
+ #end 
+ #printInfo("")
+ #printInfo("Removing UNID ENNI SAPs")    
+ #foreach ($sap in $unidEnniSaps)
+    #printInfo("UNID SAP $sap.objectFullName")
+    #set ($serviceId = $sap.serviceId)  
+    #set ($sapId = $sap.portIdentifyingName)
+#printInfo("Output to Roll Forward File")      
+    #unidRemoveEnniSap($rffile $serviceId $sapId)
+#printInfo("Output to Roll Back File")      
+    #unidRemoveEnniSap($rbfile $serviceId $sapId)
+ #end
+ #printInfo("")    
+ #printInfo("Removing UNIV ENNI SAPs")        
+ #foreach ($sap in $univEnniSaps)
+    #printInfo("UNIV SAP $sap.objectFullName")
+    #set ($serviceId = $sap.serviceId)  
+    #set ($sapId = $sap.portIdentifyingName)
+#printInfo("Output to Roll Forward File")      
+    #univRemoveEnniSap($rffile $serviceId $sapId)
+#printInfo("Output to Roll Back File")      
+    #univRemoveEnniSap($rbfile $serviceId $sapId)
+ #end
+ #printInfo("")    
+ #printInfo("Removing OVC ENNI SAPs")
+ #foreach ($sap in $ovcEnniSaps)
+    #printInfo("OVC SAP $sap.objectFullName")
+    #set ($serviceId = $sap.serviceId)  
+    #set ($sapId = $sap.portIdentifyingName)
+#printInfo("Output to Roll Forward File")      
+    #ovcRemoveEnniSap($rffile $serviceId $sapId)
+#printInfo("Output to Roll Back File")      
+    #ovcRemoveEnniSap($rbfile $serviceId $sapId)    
+ #end   
+
+#printInfo("")
+#printInfo("Modifying LAG $targetLag.lagId details")      
+## Start Modify the lag 
+#set ($satPorts = $alUtil.findByClass("lag.PortTermination","and(equality(nodeId,$targetNode.siteId),equality(lagId,$targetLag.lagId))"))
+ #if ($satPorts.size() eq 0)
+    #printError("No ports found for this LAG $targetLag.lagId on $targedtNode.siteId")
+    $alUtil.userError("No ports found for this LAG $targetLag.lagId on $targedtNode.siteId")	
+ #else
+    #foreach ($satPort in $satPorts)
+      #set ($tempSatPort = $satPort.terminatedObjectName)
+      #set ($bar = $satelitePorts.add($tempSatPort))
+    #end
+ #end
+ 
+ #set($breakPorts = $boPorts.split("\r\n|\r|\n"))
+ #foreach($breakPort in $breakPorts)
+  #set ($bar = $breakoutPorts.add($breakPort))
+ #end
+#printInfo("Output to Roll Forward File") 
+  #configureLag ($rffile $targetLag.lagId $satelitePorts $breakoutPorts)
+#printInfo("Output to Roll Back File") 
+  #configureLag ($rbfile $targetLag.lagId $breakoutPorts $satelitePorts)
+  #printInfo("")  
+  #printInfo("Finished modifying LAG $targetLag.lagId details")      
+  #printInfo("") 
+  #printInfo("Rebuilding UNID ENNI SAPs")  
+  #foreach ($sap in $unidEnniSaps)
+    #printInfo("UNID SAP $sap.objectFullName")
+    #set ($serviceId = $sap.serviceId)
+    #set ($sapDescription = $sap.description)
+    #set ($sapId = $sap.portIdentifyingName)
+    #set ($sapFdn = $sap.objectFullName)         
+#printInfo("Output to Roll Forward File")       
+    #unidCreateEnniSap($rffile $serviceId $sapDescription $sapId $sapFdn)
+#printInfo("Output to Roll Back File")       
+    #unidCreateEnniSap($rbfile $serviceId $sapDescription $sapId $sapFdn)
+  #end
+  #printInfo("")    
+  #printInfo("Rebuilding UNIV ENNI SAPs")      
+  #foreach ($sap in $univEnniSaps)
+    #printInfo("UNIV SAP $sap.objectFullName")
+    #set ($serviceId = $sap.serviceId)
+    #set ($sapDescription = $sap.description)
+    #set ($sapId = $sap.portIdentifyingName)            
+#printInfo("Output to Roll Forward File")    
+    #univCreateEnniSap($rffile $serviceId $sapDescription $sapId)
+#printInfo("Output to Roll Back File")    
+    #univCreateEnniSap($rbfile $serviceId $sapDescription $sapId)
+  #end
+  #printInfo("")    
+  #printInfo("Rebuilding OVC ENNI SAPs")      
+  #foreach ($sap in $ovcEnniSaps)
+    #printInfo("OVC SAP $sap.objectFullName")
+    #set ($serviceId = $sap.serviceId)
+    #set ($sapDescription = $sap.description)
+    #set ($sapId = $sap.portIdentifyingName)
+    #set ($sapFdn = $sap.objectFullName)          
+#printInfo("Output to Roll Forward File")             
+    #ovcCreateEnniSap($rffile $serviceId $sapDescription $sapId $sapFdn)
+#printInfo("Output to Roll Back File")             
+    #ovcCreateEnniSap($rbfile $serviceId $sapDescription $sapId $sapFdn)    
+  #end
+
+ 
+
+##++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+## Handle ETS Interface
+##++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+#elseif ($interfaceType.equalsIgnoreCase("ets"))
+#printInfo("")
+#printInfo("Interface Type ETS selected")
+
+
+## Start Modify the lag 
+#set ($satPorts = $alUtil.findByClass("lag.PortTermination","and(equality(nodeId,$targetNode.siteId),equality(lagId,$targetLag.lagId))"))
+ #if ($satPorts.size() eq 0)
+    #printError("No ports found for this LAG $targetLag.lagId on $targedtNode.siteId")
+    $alUtil.userError("No ports found for this LAG $targetLag.lagId on $targedtNode.siteId")	
+ #else
+    #foreach ($satPort in $satPorts)
+      #set ($tempSatPort = $satPort.terminatedObjectName)
+      #set ($bar = $satelitePorts.add($tempSatPort))
+    #end
+ #end
+ 
+ #set($breakPorts = $boPorts.split("\r\n|\r|\n"))
+ #foreach($breakPort in $breakPorts)
+  #set ($bar = $breakoutPorts.add($breakPort))
+ #end
+#printInfo("")
+#printInfo("Modifying LAG $targetLag.lagId details")      
+#printInfo("Output to Roll Forward File")
+ #configureLag ($rffile $targetLag.lagId $satelitePorts $breakoutPorts)
+#printInfo("Output to Roll Back File")
+ #configureLag ($rbfile $targetLag.lagId $breakoutPorts $satelitePorts)
+#printInfo("")  
+#printInfo("Finished modifying LAG $targetLag.lagId details")      
+ 
+## End Modify the lag  
+ 
+#else
+  #printError("It's not possible to get here in the script. If you see this message, you have real problems.")
+#end ##(if $interfaceType)
+
+
+##++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+## Restart Lag
+##++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+#printInfo("")
+#printInfo("Restarting Lag $targetLag.lagId")
+#printInfo("Output to Roll Forward File")
+#noShutdownLag($rffile $targetLag.lagId)
+#printInfo("Output to Roll Back File")
+#noShutdownLag($rbfile $targetLag.lagId)
+
+
+##++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
+#set ($fred = $rffile.close())
+#set ($barney = $rbfile.close())
+
+#checkSyntax($targetSiteId $rfFilename) 
+#checkSyntax($targetSiteId $rbFilename)
+
+#manageTempUser($username $password $targetSiteId "remove")
+
+#elseif ($action eq "check")
+
+##++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+## Running Post Check Script
+##++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+#prePostCheck($targetSiteId $targetLag.lagId $interfaceType)
+
+#end
+
+
+##++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+## Macros
+##++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
+#macro (printError $message)
+  <p><b><font color="red">ERROR</font></b> $message </p>              
+#end
+  
+#macro (printInfo $message)
+  <br/> $message              
+#end
+
+#macro (checkSyntax $m_siteId  $m_fileName)
+  $syntaxInvoker.addVariable('string', 'filename', $m_fileName)
+  #set($result = $syntaxInvoker.invokeScript($m_siteId))
+  #if( $result.failed )
+      $alUtil.userError("Error while checking Syntax $m_fileName on $m_siteId:$result.getErrorMessage()")
+  #end 
+#end
+
+
+#macro (prePostCheck $m_siteId  $m_lagId $m_interfaceType)
+  $checkInvoker.addVariable('string', 'lagId', $m_lagId)
+  $checkInvoker.addVariable('string', 'type', $m_interfaceType)  
+  #set($result = $checkInvoker.invokeScript($m_siteId))
+  #if( $result.failed )
+      $alUtil.userError("Error while running Pre-Post Check on $m_siteId:$result.getErrorMessage()")
+  #end 
+#end
+
+
+#macro (manageTempUser $m_user $m_pass $m_siteId $m_action)
+  $userInvoker.addVariable('string', 'username', $m_user)
+  $userInvoker.addVariable('string', 'password', $m_pass)
+  $userInvoker.addVariable('string', 'action', $m_action)  
+  #set($result = $userInvoker.invokeScript($m_siteId))
+  #if( $result.failed )
+      $alUtil.userError("Failed to $m_action user profile on $m_siteId: $result.getErrorMessage()")
+  #end 
+#end
+
+##++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+## LAG MACROS
+##++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
+#macro(shutdownLag $filePointer $m_lagId)
+ #set ($foo = $filePointer.writeln("/configure lag $m_lagId shutdown"))
+#end
+
+#macro (noShutdownLag $filePointer $m_lagId)
+ #set ($foo = $filePointer.writeln("/configure lag $m_lagId no shutdown"))
+#end
+
+#macro (configureLag $filePointer $m_lagId $m_satelitePorts $m_breakoutPorts)
+ #foreach ($m_satelitePortId in $m_satelitePorts)
+  #printInfo("Removing port $m_satelitePortId from Lag $m_lagId")
+  #set ($foo = $filePointer.writeln("/configure lag $m_lagId no port $m_satelitePortId"))
+ #end
+ #foreach ($m_breakoutPortId in $m_breakoutPorts)
+  #printInfo("Adding port $m_breakoutPortId to Lag $m_lagId") 
+  #set ($foo = $filePointer.writeln("/configure lag $m_lagId port $m_breakoutPortId"))
+ #end
+#end
+
+##++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+## INNI MACROS
+##++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
+#macro (checkOvcInniSapMip $m_sapFdn)
+ #set ($sapMipPrimaryVlanEnable = false)
+ #set ($sapMipVlanId = "0")
+ #set ($sapMipMacAddress = "0") 
+ #set ($sapMip = "${m_sapFdn}:mipconf-%")
+ #set ($sapMipEntry = $alUtil.findByClass("ethernetoam.SapMipEntry","wildcard(objectFullName,$sapMip)"))
+  #if ($sapMipEntry.size() gt 0)
+    #set ($sapMipPrimaryVlanEnable = $sapMipEntry[0].primaryVlanEnable)
+    #set ($sapMipVlanId = $sapMipEntry[0].sapVlanId)
+	#set ($sapMipMacAddress = $sapMipEntry[0].macAddress)
+  #end
+#end
+
+#macro(unidCreateInniSap $filePointer $m_serviceId $m_sapDescription $m_sapId)
+  #set ($foo = $filePointer.writeln("/configure service vpls $m_serviceId sap $m_sapId leaf-ac split-horizon-group ""$m_sapDescription"" create"))
+  #set ($foo = $filePointer.writeln("/configure service vpls $m_serviceId sap $m_sapId description ""$m_sapDescription"""))
+  #set ($foo = $filePointer.writeln("/configure service vpls $m_serviceId sap $m_sapId max-nbr-mac-addr 8192"))
+  #set ($foo = $filePointer.writeln("/configure service vpls $m_serviceId sap $m_sapId auto-learn-mac-protect"))
+  #set ($foo = $filePointer.writeln("/configure service vpls $m_serviceId sap $m_sapId restrict-protected-src discard-frame"))
+  #set ($foo = $filePointer.writeln("/configure service vpls $m_serviceId sap $m_sapId ingress qos 59460"))  
+  #set ($foo = $filePointer.writeln("/configure service vpls $m_serviceId sap $m_sapId ingress match-qinq-dot1p bottom"))    
+  #set ($foo = $filePointer.writeln("/configure service vpls $m_serviceId sap $m_sapId egress qos 59950"))
+  #set ($foo = $filePointer.writeln("/configure service vpls $m_serviceId sap $m_sapId no shutdown"))
+#end
+
+#macro (unidRemoveInniSap $filePointer $m_serviceId $m_sapId)
+  #set ($foo = $filePointer.writeln("/configure service vpls $m_serviceId sap $m_sapId shutdown"))
+  #set ($foo = $filePointer.writeln("/configure service vpls $m_serviceId no sap $m_sapId"))
+#end
+
+#macro (univCreateInniSap $filePointer $m_serviceId $m_sapDescription $m_sapId)
+  #set ($foo = $filePointer.writeln("/configure service vpls $m_serviceId sap $m_sapId leaf-ac create"))
+  #set ($foo = $filePointer.writeln("/configure service vpls $m_serviceId sap $m_sapId description ""$m_sapDescription"""))
+  #set ($foo = $filePointer.writeln("/configure service vpls $m_serviceId sap $m_sapId max-nbr-mac-addr 8192"))  
+  #set ($foo = $filePointer.writeln("/configure service vpls $m_serviceId sap $m_sapId collect-stats"))  
+  #set ($foo = $filePointer.writeln("/configure service vpls $m_serviceId sap $m_sapId accounting-policy 94"))    
+  #set ($foo = $filePointer.writeln("/configure service vpls $m_serviceId sap $m_sapId ingress qos 49"))
+  #set ($foo = $filePointer.writeln("/configure service vpls $m_serviceId sap $m_sapId egress qos 49"))
+  #set ($foo = $filePointer.writeln("/configure service vpls $m_serviceId sap $m_sapId no shutdown"))  
+#end
+
+#macro (univRemoveInniSap $filePointer $m_serviceId $m_sapId $m_egrressQosId)
+  #set ($foo = $filePointer.writeln("/configure service vpls $m_serviceId sap $m_sapId shutdown"))
+  #set ($foo = $filePointer.writeln("/configure service vpls $m_serviceId no sap $m_sapId"))
+#end
+
+#macro(ovcCreateInniSap $filePointer $m_serviceId $m_sapDescription $m_sapId $m_egrressQosId $m_sapFdn)
+  #checkOvcInniSapMip($m_sapFdn)
+  #printInfo("primary-vlan-enable - $sapMipPrimaryVlanEnable")
+  #printInfo("primary vlan Id - $sapMipVlanId")    
+  #set ($foo = $filePointer.writeln("/configure service epipe $m_serviceId sap $m_sapId create"))
+  #set ($foo = $filePointer.writeln("/configure service epipe $m_serviceId sap $m_sapId description ""$m_sapDescription"""))
+  #if ($sapMipPrimaryVlanEnable eq true)
+  #set ($foo = $filePointer.writeln("/configure service epipe $m_serviceId sap $m_sapId eth-cfm mip mac 00:00:00:00:00:02 primary-vlan-enable $sapMipVlanId"))  
+  #else  
+  #set ($foo = $filePointer.writeln("/configure service epipe $m_serviceId sap $m_sapId eth-cfm mip mac 00:00:00:00:00:02"))
+  #end  
+  #set ($foo = $filePointer.writeln("/configure service epipe $m_serviceId sap $m_sapId ingress qos 22"))
+  #set ($foo = $filePointer.writeln("/configure service epipe $m_serviceId sap $m_sapId egress qos $m_egrressQosId"))
+  #set ($foo = $filePointer.writeln("/configure service epipe $m_serviceId sap $m_sapId dist-cpu-protection FAS-ACCESS-OVC-POLICY"))
+  #set ($foo = $filePointer.writeln("/configure service epipe $m_serviceId sap $m_sapId no shutdown"))
+#end
+  
+#macro (ovcRemoveInniSap $filePointer $m_serviceId $m_sapId $m_sapFdn)
+  #printInfo("11 sapFdn $m_sapFdn")
+  #checkOvcInniSapMip($m_sapFdn)
+  #printInfo("primary-vlan-enable - $sapMipPrimaryVlanEnable")
+  #printInfo("primary vlan Id - $sapMipVlanId")    
+  #set ($foo = $filePointer.writeln("/configure service epipe $m_serviceId sap $m_sapId shutdown"))
+  #if ($sapMipPrimaryVlanEnable eq true)
+  #set ($foo = $filePointer.writeln("/configure service epipe $m_serviceId sap $m_sapId eth-cfm no mip primary-vlan-enable $sapMipVlanId"))  
+  #else
+  #set ($foo = $filePointer.writeln("/configure service epipe $m_serviceId sap $m_sapId eth-cfm no mip"))
+  #end
+  #set ($foo = $filePointer.writeln("/configure service epipe $m_serviceId no sap $m_sapId"))
+#end
+
+#macro(ocsCreateInniSap $filePointer $m_serviceId $m_sapDescription $sapId $m_mgmtSapIngressQosId $m_mgmtSapEgressQosId $m_maxNbrMacAddress)
+  #set( $foo = $filePointer.writeln("/configure service vpls $m_serviceId sap $sapId split-horizon-group MGMT-SHG leaf-ac create"))
+  #set( $foo = $filePointer.writeln("/configure service vpls $m_serviceId sap $sapId description ""$m_sapDescription"""))
+  #set( $foo = $filePointer.writeln("/configure service vpls $m_serviceId sap $sapId max-nbr-mac-addr $m_maxNbrMacAddress"))
+  #set( $foo = $filePointer.writeln("/configure service vpls $m_serviceId sap $sapId auto-learn-mac-protect"))
+  #set( $foo = $filePointer.writeln("/configure service vpls $m_serviceId sap $sapId restrict-protected-src discard-frame"))
+  #set( $foo = $filePointer.writeln("/configure service vpls $m_serviceId sap $sapId ingress qos $m_mgmtSapIngressQosId"))
+  #set( $foo = $filePointer.writeln("/configure service vpls $m_serviceId sap $sapId egress qos $m_mgmtSapEgressQosId"))
+  #set( $foo = $filePointer.writeln("/configure service vpls $m_serviceId sap $sapId collect-stats"))
+  #set( $foo = $filePointer.writeln("/configure service vpls $m_serviceId sap $sapId accounting-policy 94"))
+  #set( $foo = $filePointer.writeln("/configure service vpls $m_serviceId sap $sapId no shutdown"))
+#end
+
+#macro(ocsRemoveInniSap $filePointer $m_serviceId $sapId)
+  #set ($foo = $filePointer.writeln("/configure service vpls $m_serviceId sap $sapId shutdown"))
+  #set ($foo = $filePointer.writeln("/configure service vpls $m_serviceId no sap $sapId"))
+#end
+
+
+##++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+## ENNI MACROS
+##++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
+#macro (checkOvcEnniSapMep $m_sapId $m_ovcId)
+ #set ($maName = "MA-ST-${m_ovcId}")
+ #set ($sapMepPrimaryVlanEnable = false)
+ #set ($sapMepEntry = $alUtil.findByClass("ethernetoam.Mep","equality(maintAssocName,$maName)"))
+  #if ($sapMepEntry.size() gt 0)
+    #set ($sapMepPrimaryVlanEnable = $sapMepEntry[0].primaryVlanEnable)
+  #end 
+#end
+
+
+#macro(unidCreateEnniSap $filePointer $m_serviceId $m_sapDescription $m_sapId $m_sapFdn)
+  #set ($override2Fdn = "${m_sapFdn}:ingOvr-59940-2")
+  #set ($ovr2s = $alUtil.findByClass("service.SapIngressPolicerOverride","equality(objectFullName,$override2Fdn)"))
+  #if ($ovr2s.size() != 0)
+  #set ($d2Rate = $ovr2s[0].pir)
+  #set ($d2Cir = $ovr2s[0].cir)
+  #set ($d2Mbs = $ovr2s[0].mbs)
+  #set ($d2Cbs = $ovr2s[0].cbs)
+  #else
+  #set ($d2Rate = "-2")
+  #set ($d2Cir = "-2")
+  #set ($d2Mbs = "-2")
+  #set ($d2Cbs = "-2")
+  #end
+            
+  #set ($override5Fdn = "${m_sapFdn}:ingOvr-59940-5")
+  #set ($ovr5s = $alUtil.findByClass("service.SapIngressPolicerOverride","equality(objectFullName,$override5Fdn)"))
+  #if ($ovr5s.size() != 0)  
+  #set ($d5Rate = $ovr5s[0].pir)
+  #set ($d5Cir = $ovr5s[0].cir)
+  #set ($d5Mbs = $ovr5s[0].mbs)
+  #set ($d5Cbs = $ovr5s[0].cbs)
+  #else
+  #set ($d5Rate = "-2")
+  #set ($d5Cir = "-2")
+  #set ($d5Mbs = "-2")
+  #set ($d5Cbs = "-2")
+  #end  
+  
+  #set ($override6Fdn = "${m_sapFdn}:ingOvr-59940-6")
+  #set ($ovr6s = $alUtil.findByClass("service.SapIngressPolicerOverride","equality(objectFullName,$override6Fdn)"))
+  #if ($ovr6s.size() != 0)  
+  #set ($d6Rate = $ovr6s[0].pir)
+  #set ($d6Cir = $ovr6s[0].cir)
+  #else
+  #set ($d6Rate = "-2")
+  #set ($d6Cir = "-2")
+  #end   
+  #set ($ovrMaxRateFdn = "${m_sapFdn}:iCtlOvr-1")
+  #set ($ovrMR = $alUtil.findByClass("service.SapIngPolicerCtlOverride","equality(objectFullName,$ovrMaxRateFdn)")) 
+  #set ($m_maxrate = $ovrMR[0].policerCtlOvrMaxRate)
+  #set ($policerLevel2OverrideFdn = "${m_sapFdn}:iCtlOvr-1:level-2")
+  #printInfo("$policerLevel2OverrideFdn")
+  #set ($plo2 = $alUtil.findByClass("service.SapIngressPolicerLevelOverride","equality(objectFullName,$policerLevel2OverrideFdn)")) 
+  #set ($m_p2 = $plo2[0].SubProfPCtrlLvlOvrCumMBS)
+  #printInfo("$m_p2")  
+  #set ($policerLevel5OverrideFdn = "${m_sapFdn}:iCtlOvr-1:level-5")
+  #set ($plo5 = $alUtil.findByClass("service.SapIngressPolicerLevelOverride","equality(objectFullName,$policerLevel5OverrideFdn)")) 
+  #set ($m_p5 = $plo5[0].SubProfPCtrlLvlOvrCumMBS)
+
+  #set ($policerLevel6OverrideFdn = "${m_sapFdn}:iCtlOvr-1:level-6") 
+  #set ($plo6 = $alUtil.findByClass("service.SapIngressPolicerLevelOverride","equality(objectFullName,$policerLevel6OverrideFdn)")) 
+  #set ($m_p6 = $plo6[0].SubProfPCtrlLvlOvrCumMBS)
+
+
+  #set ($foo = $filePointer.writeln("/configure service epipe $m_serviceId sap $sapId create"))
+  #set ($foo = $filePointer.writeln("/configure service epipe $m_serviceId sap $sapId description ""$m_sapDescription"""))
+  #set ($foo = $filePointer.writeln("/configure service epipe $m_serviceId sap $sapId dist-cpu-protection FAS-ACCESS-CVC-POLICY"))
+  #set ($foo = $filePointer.writeln("/configure service epipe $m_serviceId sap $sapId collect-stats"))
+  #set ($foo = $filePointer.writeln("/configure service epipe $m_serviceId sap $sapId accounting-policy 96"))
+  #set ($foo = $filePointer.writeln("/configure service epipe $m_serviceId sap $sapId ingress filter mac 1"))
+  #set ($foo = $filePointer.writeln("/configure service epipe $m_serviceId sap $sapId ingress policer-control-policy CDP-59940"))
+  #set ($foo = $filePointer.writeln("/configure service epipe $m_serviceId sap $sapId ingress policer-control-override create"))
+  #set ($foo = $filePointer.writeln("/configure service epipe $m_serviceId sap $sapId ingress policer-control-override max-rate $m_maxrate"))
+  #set ($foo = $filePointer.writeln("/configure service epipe $m_serviceId sap $sapId ingress policer-control-override priority-mbs-thresholds"))
+  #set ($foo = $filePointer.writeln("/configure service epipe $m_serviceId sap $sapId ingress policer-control-override priority-mbs-thresholds priority 2 mbs-contribution $m_p2 bytes"))
+  #set ($foo = $filePointer.writeln("/configure service epipe $m_serviceId sap $sapId ingress policer-control-override priority-mbs-thresholds priority 5 mbs-contribution $m_p5 bytes"))
+  #set ($foo = $filePointer.writeln("/configure service epipe $m_serviceId sap $sapId ingress policer-control-override priority priority-mbs-thresholds 6 mbs-contribution $m_p6 bytes"))
+  #set ($foo = $filePointer.writeln("/configure service epipe $m_serviceId sap $sapId ingress qos 59940"))
+  #set ($foo = $filePointer.writeln("/configure service epipe $m_serviceId sap $sapId ingress policer-override policer 2 create"))
+  #if (($d2Rate != "-2") || ($d2Cir != "-2"))   
+  #set ($foo = $filePointer.writeln("/configure service epipe $m_serviceId sap $sapId ingress policer-override policer 2 rate $d2Rate cir $d2Cir"))
+  #end
+  #if ($d2Mbs != "-2")
+  #set ($foo = $filePointer.writeln("/configure service epipe $m_serviceId sap $sapId ingress policer-override policer 2 mbs $d2Mbs bytes"))
+  #end
+  #if ($d2Cbs != "-2")  
+  #set ($foo = $filePointer.writeln("/configure service epipe $m_serviceId sap $sapId ingress policer-override policer 2 cbs $d2Cbs bytes"))
+  #end
+  #set ($foo = $filePointer.writeln("/configure service epipe $m_serviceId sap $sapId ingress policer-override policer 5 create"))
+  #if (($d5Rate != "-2") || ($d2Cir != "-2"))       
+  #set ($foo = $filePointer.writeln("/configure service epipe $m_serviceId sap $sapId ingress policer-override policer 5 rate $d5Rate cir $d5Cir"))
+  #end
+  #if ($d5Mbs != "-2")
+  #set ($foo = $filePointer.writeln("/configure service epipe $m_serviceId sap $sapId ingress policer-override policer 5 mbs $d5Mbs bytes"))
+  #end
+  #if ($d5Cbs != "-2")  
+  #set ($foo = $filePointer.writeln("/configure service epipe $m_serviceId sap $sapId ingress policer-override policer 5 cbs $d5Cbs bytes"))
+  #end
+  #set ($foo = $filePointer.writeln("/configure service epipe $m_serviceId sap $sapId ingress policer-override policer 6 create"))
+  #if (($d6Rate != "-2") || ($d2Cir != "-2"))     
+  #set ($foo = $filePointer.writeln("/configure service epipe $m_serviceId sap $sapId ingress policer-override policer 6 rate $d6Rate cir $d6Cir"))
+  #end
+  #set ($foo = $filePointer.writeln("/configure service epipe $m_serviceId sap $sapId ingress match-qinq-dot1p bottom"))
+  #set ($foo = $filePointer.writeln("/configure service epipe $m_serviceId sap $sapId egress qos 59480"))
+  #set ($foo = $filePointer.writeln("/configure service epipe $m_serviceId sap $sapId no shutdown"))
+#end
+
+#macro (unidRemoveEnniSap $filePointer $m_serviceId $m_sapId)
+  #set ($foo = $filePointer.writeln("/configure service epipe $m_serviceId sap $m_sapId shutdown"))
+  #set ($foo = $filePointer.writeln("/configure service epipe $m_serviceId no sap $m_sapId"))
+#end
+
+#macro (univCreateEnniSap $filePointer $m_serviceId $m_sapDescription $m_sapId)
+  #set ($foo = $filePointer.writeln("/configure service vpls $m_serviceId sap $m_sapId create"))
+  #set ($foo = $filePointer.writeln("/configure service vpls $m_serviceId sap $m_sapId description ""$m_sapDescription"""))
+  #set ($foo = $filePointer.writeln("/configure service vpls $m_serviceId sap $m_sapId max-nbr-mac-addr 8192"))
+  #set ($foo = $filePointer.writeln("/configure service vpls $m_serviceId sap $m_sapId dist-cpu-protection FAS-ACCESS-CVC-POLICY"))  
+  #set ($foo = $filePointer.writeln("/configure service vpls $m_serviceId sap $m_sapId ingress qos 48"))
+  #set ($foo = $filePointer.writeln("/configure service vpls $m_serviceId sap $m_sapId ingress policer-override policer 6 create"))
+  #set ($foo = $filePointer.writeln("/configure service vpls $m_serviceId sap $m_sapId ingress policer-override policer 6 rate 5000 cir 5000"))
+  #set ($foo = $filePointer.writeln("/configure service vpls $m_serviceId sap $m_sapId ingress filter mac 1"))
+  #set ($foo = $filePointer.writeln("/configure service vpls $m_serviceId sap $m_sapId egress qos 48"))
+  #set ($foo = $filePointer.writeln("/configure service vpls $m_serviceId sap $m_sapId egress queue-override queue 6 create"))
+  #set ($foo = $filePointer.writeln("/configure service vpls $m_serviceId sap $m_sapId egress queue-override queue 6 rate 5000 cir 5000"))
+  #set ($foo = $filePointer.writeln("/configure service vpls $m_serviceId sap $m_sapId egress filter mac 30001"))
+  #set ($foo = $filePointer.writeln("/configure service vpls $m_serviceId sap $m_sapId collect-stats"))  
+  #set ($foo = $filePointer.writeln("/configure service vpls $m_serviceId sap $m_sapId accounting-policy 94"))    
+  #set ($foo = $filePointer.writeln("/configure service vpls $m_serviceId sap $m_sapId no shutdown"))
+#end
+
+#macro (univRemoveEnniSap $filePointer $m_serviceId $m_sapId)
+  #set ($foo = $filePointer.writeln("/configure service vpls $m_serviceId sap $m_sapId shutdown"))
+  #set ($foo = $filePointer.writeln("/configure service vpls $m_serviceId no sap $m_sapId"))
+#end
+
+#macro(ovcCreateEnniSap $filePointer $m_serviceId $m_sapDescription $m_sapId $m_sapFdn)
+  #checkOvcEnniSapMep($m_sapId $m_sapDescription)
+  #printInfo("primary vlan enable - $sapMepPrimaryVlanEnable")
+  #set ($ovr2Fdn = "${m_sapFdn}:ingOvr-21-2")
+  #set ($ovr2 = $alUtil.findByClass("service.SapIngressPolicerOverride","equality(objectFullName,$ovr2Fdn)"))
+  #if ($ovr2.size() != 0)  
+  #set ($o2Rate = $ovr2[0].pir)
+  #set ($o2Cir = $ovr2[0].cir)
+  #set ($o2Mbs = $ovr2[0].mbs)
+  #set ($o2Cbs = $ovr2[0].cbs)
+  #else
+  #set ($o2Rate = "-2")
+  #set ($o2Cir = "-2")
+  #set ($o2Mbs = "-2")
+  #set ($o2Cbs = "-2")
+  #end   
+  #printInfo ("p2 $o2Rate $o2Cir $o2Mbs $o2Cbs")
+ 
+  #set ($ovr4Fdn = "${m_sapFdn}:ingOvr-21-4")
+  #set ($ovr4 = $alUtil.findByClass("service.SapIngressPolicerOverride","equality(objectFullName,$ovr4Fdn)"))
+  #if ($ovr4.size() != 0)  
+  #set ($o4Rate = $ovr4[0].pir)
+  #set ($o4Cir = $ovr4[0].cir)
+  #set ($o4Mbs = $ovr4[0].mbs)
+  #set ($o4Cbs = $ovr4[0].cbs)
+  #else
+  #set ($o4Rate = "-2")
+  #set ($o4Cir = "-2")
+  #set ($o4Mbs = "-2")
+  #set ($o4Cbs = "-2")
+  #end    
+  #printInfo ("p4 $o4Rate $o4Cir $o4Mbs $o4Cbs")
+  #set ($ovr5Fdn = "${m_sapFdn}:ingOvr-21-5")
+  #set ($ovr5 = $alUtil.findByClass("service.SapIngressPolicerOverride","equality(objectFullName,$ovr5Fdn)"))
+  #if ($ovr5.size() != 0 )  
+  #set ($o5Rate = $ovr5[0].pir)
+  #set ($o5Cir = $ovr5[0].cir)
+  #set ($o5Mbs = $ovr5[0].mbs)
+  #set ($o5Cbs = $ovr5[0].cbs)
+  #else
+  #set ($o5Rate = "-2")
+  #set ($o5Cir = "-2")
+  #set ($o5Mbs = "-2")
+  #set ($o5Cbs = "-2")
+  #end   
+  #printInfo ("p5 $o5Rate $o5Cir $o5Mbs $o5Cbs")
+ 
+  #set ($ovr6Fdn = "${m_sapFdn}:ingOvr-21-6")
+  #set ($ovr6 = $alUtil.findByClass("service.SapIngressPolicerOverride","equality(objectFullName,$ovr6Fdn)"))
+  #if ($ovr6.size() != 0)  
+  #set ($o6Rate = $ovr6[0].pir)
+  #set ($o6Cir = $ovr6[0].cir)
+  #set ($o6Mbs = $ovr6[0].mbs)
+  #set ($o6Cbs = $ovr6[0].cbs)
+  #else
+  #set ($o6Rate = "-2")
+  #set ($o6Cir = "-2")
+  #set ($o6Mbs = "-2")
+  #set ($o6Cbs = "-2")
+  #end    
+  #printInfo ("p6 $o6Rate $o6Cir $o6Mbs $o6Cbs")  
+  #set ($foo = $filePointer.writeln("/configure service epipe $m_serviceId sap $m_sapId create"))
+  #set ($foo = $filePointer.writeln("/configure service epipe $m_serviceId sap $m_sapId description ""$m_sapDescription"""))
+  #set ($foo = $filePointer.writeln("/configure service epipe $m_serviceId sap $m_sapId ingress qos 21"))
+  #if (($o2Rate != "-2") || ($o2Cir != "-2")) 
+  #set ($foo = $filePointer.writeln("/configure service epipe $m_serviceId sap $m_sapId ingress policer-override policer 2 create rate $o2Rate cir $o2Cir"))
+  #end 
+  #if ($o2Mbs != "-2")  
+  #set ($foo = $filePointer.writeln("/configure service epipe $m_serviceId sap $m_sapId ingress policer-override policer 2 create mbs $o2Mbs bytes"))
+  #end  
+  #if ($o2Cbs != "-2")  
+  #set ($foo = $filePointer.writeln("/configure service epipe $m_serviceId sap $m_sapId ingress policer-override policer 2 create cbs $o2Cbs bytes"))
+  #end
+  #if (($o4Rate != "-2") || ($o4Cir != "-2"))       
+  #set ($foo = $filePointer.writeln("/configure service epipe $m_serviceId sap $m_sapId ingress policer-override policer 4 create rate $o4Rate cir $o4Cir"))
+  #end 
+  #if ($o4Mbs != "-2")  
+  #set ($foo = $filePointer.writeln("/configure service epipe $m_serviceId sap $m_sapId ingress policer-override policer 4 create mbs $o4Mbs bytes"))
+  #end
+  #if ($o4Cbs != "-2")  
+  #set ($foo = $filePointer.writeln("/configure service epipe $m_serviceId sap $m_sapId ingress policer-override policer 4 create cbs $o4Cbs bytes"))
+  #end
+  #if (($o5Rate != "-2") || ($o5Cir != "-2"))         
+  #set ($foo = $filePointer.writeln("/configure service epipe $m_serviceId sap $m_sapId ingress policer-override policer 5 create rate $o5Rate cir $o5Cir"))
+  #end 
+  #if ($o5Mbs != "-2")  
+  #set ($foo = $filePointer.writeln("/configure service epipe $m_serviceId sap $m_sapId ingress policer-override policer 5 create mbs $o5Mbs bytes"))
+  #end
+  #if ($o5Cbs != "-2")      
+  #set ($foo = $filePointer.writeln("/configure service epipe $m_serviceId sap $m_sapId ingress policer-override policer 5 create cbs $o5Cbs bytes"))
+  #end
+  #if (($o6Rate != "-2") || ($o6Cir != "-2"))           
+  #set ($foo = $filePointer.writeln("/configure service epipe $m_serviceId sap $m_sapId ingress policer-override policer 6 create rate $o6Rate cir $o6Cir"))
+  #end 
+  #if ($o6Mbs != "-2")  
+  #set ($foo = $filePointer.writeln("/configure service epipe $m_serviceId sap $m_sapId ingress policer-override policer 6 create mbs $o6Mbs bytes"))
+  #end
+  #if ($o6Cbs != "-2")      
+  #set ($foo = $filePointer.writeln("/configure service epipe $m_serviceId sap $m_sapId ingress policer-override policer 6 create cbs $o6Cbs bytes"))
+  #end        
+  #set ($foo = $filePointer.writeln("/configure service epipe $m_serviceId sap $m_sapId egress qos 25"))
+  #set ($foo = $filePointer.writeln("/configure service epipe $m_serviceId sap $m_sapId dist-cpu-protection FAS-ACCESS-OVC-POLICY"))
+  #set ($foo = $filePointer.writeln("/configure service epipe $m_serviceId sap $m_sapId collect-stats"))
+  #set ($foo = $filePointer.writeln("/configure service epipe $m_serviceId sap $m_sapId accounting-policy 90"))
+  #set ($foo = $filePointer.writeln("/configure service epipe $m_serviceId sap $m_sapId eth-cfm  squelch-ingress-levels 0 1 2"))
+  #if ($sapMepPrimaryVlanEnable eq true)   
+  #set ($foo = $filePointer.writeln("/configure service epipe $m_serviceId sap $m_sapId eth-cfm mep 1 domain 2 association $m_serviceId direction up primary-vlan-enable"))
+  #else
+  #set ($foo = $filePointer.writeln("/configure service epipe $m_serviceId sap $m_sapId eth-cfm mep 1 domain 2 association $m_serviceId direction up"))  
+  #end   
+  #set ($foo = $filePointer.writeln("/configure service epipe $m_serviceId sap $m_sapId eth-cfm mep 1 domain 2 association $m_serviceId ccm-enable"))
+  #set ($foo = $filePointer.writeln("/configure service epipe $m_serviceId sap $m_sapId eth-cfm mep 1 domain 2 association $m_serviceId mac-address 00:00:00:00:00:01"))
+  #set ($foo = $filePointer.writeln("/configure service epipe $m_serviceId sap $m_sapId eth-cfm mep 1 domain 2 association $m_serviceId ccm-ltm-priority 5"))
+  #set ($foo = $filePointer.writeln("/configure service epipe $m_serviceId sap $m_sapId eth-cfm mep 1 domain 2 association $m_serviceId one-way-delay-threshold 0"))  
+  #set ($foo = $filePointer.writeln("/configure service epipe $m_serviceId sap $m_sapId eth-cfm mep 1 domain 2 association $m_serviceId no shutdown "))
+  #set ($foo = $filePointer.writeln("/configure service epipe $m_serviceId no shutdown"))
+#end
+
+#macro(ovcRemoveEnniSap $filePointer $m_serviceId $m_sapId)
+  #set( $foo = $filePointer.writeln("/configure service epipe $m_serviceId sap $m_sapId eth-cfm mep 1 domain 2 association $m_serviceId shutdown"))
+  #set( $foo = $filePointer.writeln("/configure service epipe $m_serviceId sap $m_sapId eth-cfm no mep 1 domain 2 association $m_serviceId"))
+  #set( $foo = $filePointer.writeln("/configure service epipe $m_serviceId sap $m_sapId eth-cfm no squelch-ingress-levels"))  
+  #set ($foo = $filePointer.writeln("/configure service epipe $m_serviceId sap $m_sapId shutdown"))
+  #set ($foo = $filePointer.writeln("/configure service epipe $m_serviceId no sap $sapId"))
+#end
